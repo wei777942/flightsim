@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>飛行模擬工坊</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:-apple-system,sans-serif;color:#fff;touch-action:none;-webkit-user-select:none;user-select:none}
+#hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);font-size:13px;background:#0008;padding:4px 10px;border-radius:8px;white-space:nowrap}
+#top{position:fixed;top:8px;right:8px;display:flex;gap:6px}
+button{background:#0009;color:#fff;border:1px solid #fff5;border-radius:8px;padding:6px 10px;font-size:13px}
+.stick{position:fixed;bottom:20px;width:140px;height:140px;border-radius:50%;background:#fff2;border:2px solid #fff5}
+.stick .k{position:absolute;width:56px;height:56px;border-radius:50%;background:#fff8;left:42px;top:42px}
+#sl{left:24px}#sr{right:24px}
+#rot{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;font-size:20px;z-index:20}
+@media (orientation:portrait){#rot{display:flex}}
+#set{position:fixed;inset:20px;background:#111e;border-radius:12px;padding:12px;overflow:auto;display:none;z-index:10;font-size:14px}
+#set table{width:100%;border-collapse:collapse}#set td{padding:4px;border-bottom:1px solid #333}
+#set input[type=range]{width:110px}
+.on{background:#2a7}
+</style></head><body>
+<div id="rot">請把手機轉成橫向 ↻</div>
+<div id="hud">載入中…</div>
+<div id="top"><button id="bView">視角</button><button id="bArm">起飛</button><button id="bSet">設定</button><button id="bFs">全螢幕</button></div>
+<div class="stick" id="sl"><div class="k"></div></div>
+<div class="stick" id="sr"><div class="k"></div></div>
+<div id="set"></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+// ---------- 設定（存在瀏覽器） ----------
+const DEF={axes:{yaw:{i:0,inv:false},thr:{i:1,inv:true},roll:{i:2,inv:false},pitch:{i:3,inv:true}},
+ sens:1,expo:0.3,dead:0.05,center:[0,0,0,0,0,0,0,0],
+ btn:{arm:0,view:1,reset:2,stop:3},wind:1};
+let cfg=Object.assign(structuredClone(DEF),JSON.parse(localStorage.getItem('fsCfg')||'{}'));
+const save=()=>localStorage.setItem('fsCfg',JSON.stringify(cfg));
+const ACT={arm:'起飛／降落',view:'切換視角',reset:'重置位置',stop:'急停'};
+const AXN={thr:'油門（上升下降）',yaw:'轉向',pitch:'前後',roll:'左右'};
+// ---------- 場景 ----------
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(Math.min(devicePixelRatio,2));
+document.body.prepend(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x8ec5ff);S.fog=new THREE.Fog(0x8ec5ff,150,600);
+const cam=new THREE.PerspectiveCamera(70,1,0.1,1000);
+S.add(new THREE.HemisphereLight(0xffffff,0x557744,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,0.9);sun.position.set(50,100,30);S.add(sun);
+const H=(x,z)=>4*Math.sin(x*0.02)*Math.cos(z*0.025)+2*Math.sin(x*0.05+z*0.04)*(Math.min(1,Math.hypot(x,z)/60));
+const g=new THREE.PlaneGeometry(1000,1000,200,200);g.rotateX(-Math.PI/2);
+const p=g.attributes.position;for(let i=0;i<p.count;i++)p.setY(i,H(p.getX(i),p.getZ(i)));g.computeVertexNormals();
+S.add(new THREE.Mesh(g,new THREE.MeshLambertMaterial({color:0x5c9e4a})));
+const pad=new THREE.Mesh(new THREE.CylinderGeometry(3,3,0.2,24),new THREE.MeshLambertMaterial({color:0x333333}));pad.position.y=H(0,0)+0.1;S.add(pad);
+const rnd=(a=>()=>(a=(a*16807)%2147483647)/2147483647)(42);
+const obst=[];
+const trunk=new THREE.CylinderGeometry(0.3,0.4,3),leaf=new THREE.ConeGeometry(2,6,8);
+const tm=new THREE.MeshLambertMaterial({color:0x6b4423}),lm=new THREE.MeshLambertMaterial({color:0x2f6b2a});
+for(let i=0;i<250;i++){const x=(rnd()-.5)*500,z=(rnd()-.5)*500;if(Math.hypot(x,z)<15)continue;const y=H(x,z);
+ const t=new THREE.Mesh(trunk,tm);t.position.set(x,y+1.5,z);const l=new THREE.Mesh(leaf,lm);l.position.set(x,y+6,z);S.add(t,l);obst.push({x,z,r:2,h:y+9});}
+for(let i=0;i<25;i++){const x=(rnd()-.5)*400,z=(rnd()-.5)*400;if(Math.hypot(x,z)<30)continue;
+ const w=6+rnd()*10,d=6+rnd()*10,h=8+rnd()*30,y=H(x,z);
+ const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color:new THREE.Color().setHSL(0,0,.5+rnd()*.3)}));
+ b.position.set(x,y+h/2,z);S.add(b);obst.push({x,z,w:w/2,d:d/2,h:y+h,box:1});}
+// 無人機
+const drone=new THREE.Group();
+const body=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.15,0.7),new THREE.MeshLambertMaterial({color:0x777777}));drone.add(body);
+const nose=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.15),new THREE.MeshLambertMaterial({color:0xff4400}));nose.position.z=-0.4;drone.add(nose);
+const props=[];for(const[x,z]of[[.45,.45],[-.45,.45],[.45,-.45],[-.45,-.45]]){const pr=new THREE.Mesh(new THREE.CylinderGeometry(.25,.25,.02,12),new THREE.MeshLambertMaterial({color:0x222222,transparent:true,opacity:.7}));pr.position.set(x,.1,z);drone.add(pr);props.push(pr);}
+S.add(drone);
+// ---------- 物理狀態 ----------
+const st={pos:new THREE.Vector3(),vel:new THREE.Vector3(),yaw:0,pitch:0,roll:0,armed:false,view:0,crash:0};
+function reset(){st.pos.set(0,H(0,0)+0.3,0);st.vel.set(0,0,0);st.yaw=0;st.pitch=st.roll=0;st.armed=false;st.crash=0;}
+reset();
+let windV=new THREE.Vector3(),windT=new THREE.Vector3();
+// ---------- 輸入 ----------
+const touch={l:[0,0],r:[0,0]};
+function setupStick(el,key){const k=el.querySelector('.k');let id=null;
+ const mv=e=>{for(const t of e.changedTouches)if(t.identifier===id){const r=el.getBoundingClientRect();
+  let x=(t.clientX-r.left-r.width/2)/(r.width/2),y=(t.clientY-r.top-r.height/2)/(r.height/2);const m=Math.hypot(x,y);if(m>1){x/=m;y/=m;}
+  touch[key]=[x,-y];k.style.left=42+x*42+'px';k.style.top=42-(-y)*42+'px';}};
+ el.addEventListener('touchstart',e=>{id=e.changedTouches[0].identifier;mv(e);e.preventDefault();});
+ el.addEventListener('touchmove',e=>{mv(e);e.preventDefault();});
+ el.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===id){id=null;touch[key]=[0,0];k.style.left=k.style.top='42px';}});}
+setupStick(sl,'l');setupStick(sr,'r');
+const keys={};addEventListener('keydown',e=>keys[e.key.toLowerCase()]=1);addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
+const shape=v=>{const d=cfg.dead;if(Math.abs(v)<d)return 0;v=Math.sign(v)*(Math.abs(v)-d)/(1-d);return (1-cfg.expo)*v+cfg.expo*v*v*v;};
+let pad0=null,prevBtn=[],learn=null;
+function readInput(){
+ const gps=navigator.getGamepads?[...navigator.getGamepads()].filter(Boolean):[];pad0=gps[0]||null;
+ let inp={thr:touch.l[1],yaw:touch.l[0],pitch:touch.r[1],roll:touch.r[0]};
+ if(keys.w)inp.thr=1;if(keys.s)inp.thr=-1;if(keys.a)inp.yaw=-1;if(keys.d)inp.yaw=1;
+ if(keys.arrowup)inp.pitch=1;if(keys.arrowdown)inp.pitch=-1;if(keys.arrowleft)inp.roll=-1;if(keys.arrowright)inp.roll=1;
+ if(pad0){sl.style.display=sr.style.display='none';
+  for(const n in cfg.axes){const a=cfg.axes[n];let v=(pad0.axes[a.i]||0)-(cfg.center[a.i]||0);if(a.inv)v=-v;v=Math.max(-1,Math.min(1,v));if(Math.abs(v)>Math.abs(inp[n]))inp[n]=v;}
+  pad0.buttons.forEach((b,i)=>{const pr=b.pressed,was=prevBtn[i];
+   if(pr&&!was){if(learn){cfg.btn[learn]=i;learn=null;save();renderSet();}else for(const a in cfg.btn)if(cfg.btn[a]===i)doAct(a);}
+   prevBtn[i]=pr;});
+ }else sl.style.display=sr.style.display='';
+ for(const n in inp)inp[n]=shape(inp[n])*(n==='thr'?1:cfg.sens);
+ return inp;}
+function doAct(a){if(a==='arm'){if(st.armed&&st.pos.y-H(st.pos.x,st.pos.z)<0.5)st.armed=false;else if(!st.armed){st.armed=true;st.vel.y=2;}else st.landing=!st.landing;}
+ if(a==='view')st.view^=1;if(a==='reset')reset();if(a==='stop'){st.armed=false;}}
+bView.onclick=()=>doAct('view');bArm.onclick=()=>doAct('arm');
+bFs.onclick=()=>{const d=document.documentElement;(d.requestFullscreen||d.webkitRequestFullscreen||(()=>{})).call(d);screen.orientation?.lock?.('landscape').catch(()=>{});};
+// ---------- 設定頁 ----------
+bSet.onclick=()=>{set.style.display=set.style.display==='block'?'none':'block';renderSet();};
+let liveTimer;
+function renderSet(){
+ let h=`<b>設定</b> <button id="xClose">關閉</button> <button id="xDef">恢復預設</button><p>手把：${pad0?pad0.id:'沒偵測到（目前用螢幕搖桿／鍵盤）'}</p>
+ <p><b>搖桿對應</b>（推一下搖桿，看哪個軸號的數字在跳）</p><div id="live"></div><table>`;
+ for(const n in cfg.axes){const a=cfg.axes[n];h+=`<tr><td>${AXN[n]}</td><td>軸 <select data-ax="${n}">${[...Array(8).keys()].map(i=>`<option ${i==a.i?'selected':''}>${i}</option>`).join('')}</select></td><td><label><input type="checkbox" data-inv="${n}" ${a.inv?'checked':''}>反向</label></td></tr>`;}
+ h+=`</table><p><button id="xCal">校正中心點（放開搖桿再按）</button></p>
+ <p>靈敏度 <input type="range" min="0.3" max="2" step="0.05" value="${cfg.sens}" data-n="sens"> ${cfg.sens}</p>
+ <p>中心柔和度 <input type="range" min="0" max="0.9" step="0.05" value="${cfg.expo}" data-n="expo"> ${cfg.expo}</p>
+ <p>死區 <input type="range" min="0" max="0.2" step="0.01" value="${cfg.dead}" data-n="dead"> ${cfg.dead}</p>
+ <p>風力 <input type="range" min="0" max="3" step="0.1" value="${cfg.wind}" data-n="wind"> ${cfg.wind}</p>
+ <p><b>按鈕綁定</b>（按「綁定」再按手把上的按鈕）</p><table>`;
+ for(const a in ACT)h+=`<tr><td>${ACT[a]}</td><td>按鈕 ${cfg.btn[a]}</td><td><button data-learn="${a}" class="${learn===a?'on':''}">${learn===a?'請按手把…':'綁定'}</button></td></tr>`;
+ h+=`</table><p>按下的按鈕：<span id="liveB"></span></p>`;
+ set.innerHTML=h;
+ xClose.onclick=()=>{set.style.display='none';learn=null;};
+ xDef.onclick=()=>{cfg=structuredClone(DEF);save();renderSet();};
+ xCal.onclick=()=>{if(pad0){cfg.center=pad0.axes.map(v=>v);save();alert('已校正');}};
+ set.querySelectorAll('[data-ax]').forEach(e=>e.onchange=()=>{cfg.axes[e.dataset.ax].i=+e.value;save();});
+ set.querySelectorAll('[data-inv]').forEach(e=>e.onchange=()=>{cfg.axes[e.dataset.inv].inv=e.checked;save();});
+ set.querySelectorAll('[data-n]').forEach(e=>e.onchange=()=>{cfg[e.dataset.n]=+e.value;save();renderSet();});
+ set.querySelectorAll('[data-learn]').forEach(e=>e.onclick=()=>{learn=e.dataset.learn;renderSet();});
+ clearInterval(liveTimer);liveTimer=setInterval(()=>{if(set.style.display!=='block')return;const L=document.getElementById('live'),B=document.getElementById('liveB');
+  if(L)L.textContent=pad0?pad0.axes.map((v,i)=>`軸${i}: ${v.toFixed(2)}`).join('　'):'—';
+  if(B)B.textContent=pad0?pad0.buttons.map((b,i)=>b.pressed?i:null).filter(v=>v!==null).join(', ')||'無':'—';},100);}
+// ---------- 主迴圈 ----------
+function resize(){R.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+let last=performance.now(),camPos=new THREE.Vector3(0,3,6);
+function step(dt){const inp=readInput();
+ // 風：緩慢變化的陣風
+ if(Math.random()<dt*0.5)windT.set((Math.random()-.5)*4,(Math.random()-.5)*0.6,(Math.random()-.5)*4).multiplyScalar(cfg.wind);
+ windV.lerp(windT,dt*0.5);
+ const ground=H(st.pos.x,st.pos.z);
+ if(st.armed){
+  // 穩定模式：搖桿對應目標速度，放開就懸停
+  const maxH=12,maxV=5,maxYaw=2;
+  st.yaw-=inp.yaw*maxYaw*dt;
+  const fwd=new THREE.Vector3(-Math.sin(st.yaw),0,-Math.cos(st.yaw)),right=new THREE.Vector3(Math.cos(st.yaw),0,-Math.sin(st.yaw));
+  const tv=fwd.multiplyScalar(inp.pitch*maxH).add(right.multiplyScalar(inp.roll*maxH));
+  tv.y=st.landing?-1.5:inp.thr*maxV;
+  const acc=tv.clone().sub(st.vel).multiplyScalar(2.2);// 控制器拉回目標速度（慣性）
+  acc.clampLength(0,15);
+  st.vel.addScaledVector(acc,dt);
+  st.vel.addScaledVector(windV.clone().sub(st.vel.clone().multiplyScalar(0)),dt*0.25);// 風推力
+  // 傾角跟著加速度
+  const lf=acc.dot(new THREE.Vector3(-Math.sin(st.yaw),0,-Math.cos(st.yaw))),lr=acc.dot(new THREE.Vector3(Math.cos(st.yaw),0,-Math.sin(st.yaw)));
+  st.pitch+=(-lf*0.04-st.pitch)*Math.min(1,dt*8);st.roll+=(-lr*0.04-st.roll)*Math.min(1,dt*8);
+  props.forEach(p=>p.rotation.y+=dt*60);
+ }else{st.vel.y-=9.8*dt;st.vel.x*=1-dt;st.vel.z*=1-dt;st.pitch*=0.9;st.roll*=0.9;}
+ st.pos.addScaledVector(st.vel,dt);
+ // 碰撞
+ if(st.pos.y<ground+0.1){st.pos.y=ground+0.1;if(st.vel.y<-4&&st.armed){st.crash=2;st.armed=false;}st.vel.set(0,Math.max(0,st.vel.y),0);if(st.landing){st.armed=false;st.landing=false;}}
+ for(const o of obst){const hit=o.box?Math.abs(st.pos.x-o.x)<o.w+.4&&Math.abs(st.pos.z-o.z)<o.d+.4&&st.pos.y<o.h:Math.hypot(st.pos.x-o.x,st.pos.z-o.z)<o.r&&st.pos.y<o.h;
+  if(hit){st.crash=2;st.armed=false;st.vel.multiplyScalar(-0.3);st.pos.addScaledVector(st.vel,dt*3);}}
+ if(st.pos.y>120){st.pos.y=120;st.vel.y=Math.min(0,st.vel.y);}
+ st.crash=Math.max(0,st.crash-dt);
+ drone.position.copy(st.pos);drone.rotation.set(0,0,0);drone.rotateY(st.yaw);drone.rotateX(st.pitch);drone.rotateZ(-st.roll);
+ // 相機
+ if(st.view===0){const back=new THREE.Vector3(Math.sin(st.yaw)*6,2.5,Math.cos(st.yaw)*6);camPos.lerp(st.pos.clone().add(back),Math.min(1,dt*4));cam.position.copy(camPos);cam.lookAt(st.pos.x,st.pos.y+0.5,st.pos.z);drone.visible=true;}
+ else{cam.position.copy(st.pos).add(new THREE.Vector3(0,0.1,0));cam.rotation.set(0,0,0,'YXZ');cam.rotation.order='YXZ';cam.rotation.y=st.yaw;cam.rotation.x=st.pitch*0.5-0.1;cam.rotation.z=-st.roll*0.5;drone.visible=false;}
+ const alt=(st.pos.y-ground).toFixed(1),spd=Math.hypot(st.vel.x,st.vel.z).toFixed(1);
+ hud.textContent=`${st.crash?'💥 撞到了！ ':''}${st.armed?(st.landing?'降落中':'飛行中'):'待機'}　高度 ${alt}m　速度 ${spd}m/s　風 ${windV.length().toFixed(1)}　${pad0?'🎮 手把':'👆 觸控'}　${st.view?'機頭':'第三人稱'}`;
+ bArm.textContent=st.armed?'降落':'起飛';}
+function loop(t){const dt=Math.min(0.05,(t-last)/1000);last=t;step(dt);R.render(S,cam);requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+</script></body></html>
