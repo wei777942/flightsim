@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="manifest" href="manifest.json">
 <title>飛行模擬工坊</title>
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:-apple-system,sans-serif;color:#fff;touch-action:none;-webkit-user-select:none;user-select:none}
@@ -97,7 +97,8 @@ function readInput(){
 function doAct(a){if(a==='arm'){if(st.armed&&st.pos.y-H(st.pos.x,st.pos.z)<0.5)st.armed=false;else if(!st.armed){st.armed=true;st.vel.y=2;}else st.landing=!st.landing;}
  if(a==='view')st.view^=1;if(a==='reset')reset();if(a==='stop'){st.armed=false;}}
 bView.onclick=()=>doAct('view');bArm.onclick=()=>doAct('arm');
-bFs.onclick=()=>{const d=document.documentElement;(d.requestFullscreen||d.webkitRequestFullscreen||(()=>{})).call(d);screen.orientation?.lock?.('landscape').catch(()=>{});};
+const standalone=navigator.standalone||matchMedia('(display-mode: fullscreen),(display-mode: standalone)').matches;if(standalone)bFs.style.display='none';
+bFs.onclick=()=>{const d=document.documentElement,f=d.requestFullscreen||d.webkitRequestFullscreen;if(!f){alert('iPhone 要全螢幕：按 Safari 下方的「分享」→「加入主畫面」，再從主畫面的圖示打開。');return;}f.call(d);screen.orientation?.lock?.('landscape').catch(()=>{});};
 // ---------- 設定頁 ----------
 bSet.onclick=()=>{set.style.display=set.style.display==='block'?'none':'block';renderSet();};
 let liveTimer;
